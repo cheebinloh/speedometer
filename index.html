@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1e1e1e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Bike Speedometer</title>
+<style>
+  @font-face { font-family:Seg7;  src:url(https://cdn.jsdelivr.net/npm/dseg@0.46.0/fonts/DSEG7-Classic/DSEG7Classic-Bold.woff2) format('woff2'); }
+  @font-face { font-family:Seg14; src:url(https://cdn.jsdelivr.net/npm/dseg@0.46.0/fonts/DSEG14-Classic/DSEG14Classic-Bold.woff2) format('woff2'); }
+  :root { --bg:#1e1e1e; --fg:#fff; --dim:#8e8e8e; --ghost:#333; --accent:#f0a830; --btn:#f25f5c; --ring:min(84vw,400px); }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); }
+  body { font-family:system-ui,-apple-system,sans-serif; min-height:100dvh; display:flex; flex-direction:column;
+         padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom));
+         -webkit-user-select:none; user-select:none; overflow-x:hidden; }
+
+  /* stat blocks */
+  .stat { display:flex; flex-direction:column; min-width:0; }
+  .stat::before { content:""; width:76px; height:2px; margin-bottom:10px;
+    background:linear-gradient(90deg,var(--accent) 0 3px,transparent 3px 12px,var(--accent) 12px 15px,transparent 15px 24px,
+                               var(--accent) 24px 40px,transparent 40px 46px,var(--accent) 46px 76px); }
+  .stat b { font:30px Seg7, monospace; font-weight:normal; white-space:nowrap; }
+  .stat b small { font:600 18px system-ui,sans-serif; margin-left:4px; }
+  .stat span { color:var(--dim); font-size:18px; margin-top:4px; }
+  .center { align-items:center; text-align:center; }
+  .right { align-items:flex-start; }
+  .row { display:flex; justify-content:space-between; gap:12px; position:relative; z-index:1; }
+  .seg14 { font-family:Seg14, monospace !important; }
+
+  /* dial */
+  .dial { position:relative; width:var(--ring); height:var(--ring); margin:-40px auto; }
+  .dial svg { position:absolute; inset:0; overflow:visible; }
+  .readout { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .digits { display:flex; align-items:baseline; }
+  .seg { position:relative; font-family:Seg7, monospace; }
+  .seg .ghost { position:absolute; inset:0; color:var(--ghost); }
+  .seg .val { position:relative; }
+  .big { font-size:calc(var(--ring) * .26); }
+  .small { font-size:calc(var(--ring) * .12); }
+  .readout .unit { color:var(--dim); font-size:20px; margin-top:16px; }
+  .sub { position:absolute; left:50%; bottom:0; transform:translate(-50%,50%); width:calc(var(--ring) * .4); aspect-ratio:1;
+         display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:50%; background:var(--bg); }
+  .sub b { font:30px Seg7, monospace; font-weight:normal; }
+  .sub span { color:var(--dim); font-size:18px; margin-top:6px; }
+  .bottom-pad { height:calc(var(--ring) * .2 + 8px); }
+
+  /* controls */
+  .controls { display:grid; grid-template-columns:48px 1fr 48px; align-items:center; gap:16px; margin-top:auto; padding-top:20px; }
+  .icon { background:none; border:0; color:var(--dim); padding:8px; position:relative; }
+  .icon svg { width:32px; height:32px; display:block; }
+  .badge { position:absolute; top:0; right:0; background:var(--accent); color:#000; font-size:11px; font-weight:700;
+           border-radius:9px; min-width:18px; padding:1px 4px; }
+  .badge:empty { display:none; }
+  .pill { display:flex; gap:10px; }
+  .pill button { flex:1; height:84px; border:0; border-radius:42px; background:var(--btn); color:#fff;
+                 font:700 24px system-ui,sans-serif; letter-spacing:.5px; }
+  .pill #lapBtn { background:#333; flex:.7; }
+  [hidden] { display:none !important; }
+
+  /* dialogs */
+  dialog { background:#2a2a2a; color:var(--fg); border:0; border-radius:20px; width:min(92vw,420px); max-height:80dvh; padding:20px; }
+  dialog::backdrop { background:#000a; }
+  dialog h2 { margin:0 0 12px; font-size:20px; }
+  dialog button, dialog select { font:600 17px system-ui,sans-serif; padding:12px 16px; border-radius:12px; border:0; background:#3a3a3a; color:var(--fg); }
+  dialog .danger { background:var(--btn); }
+  dialog .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:16px; }
+  label { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:8px 0; }
+  #lapList { list-style:none; margin:0; padding:0; overflow:auto; font-variant-numeric:tabular-nums; }
+  #lapList li { display:grid; grid-template-columns:2.5em 1fr 1fr 1fr; gap:6px; padding:10px 0; border-bottom:1px solid #3a3a3a; }
+  #lapList li span:first-child { color:var(--accent); }
+  #lapList:empty::after { content:"No laps yet — tap LAP while riding."; color:var(--dim); }
+</style>
+</head>
+<body>
+  <div class="row" style="justify-content:center">
+    <div class="stat center"><b id="time">0:00:00</b><span>ride time</span></div>
+  </div>
+  <div class="row" style="margin-top:20px">
+    <div class="stat"><b><i id="max" style="font-style:normal">0.0</i><small class="u-speed">km/h</small></b><span>max speed</span></div>
+    <div class="stat right"><b><i id="dist" style="font-style:normal">0</i><small id="distUnit">m</small></b><span>distance</span></div>
+  </div>
+
+  <div class="dial">
+    <svg viewBox="0 0 100 100" aria-hidden="true">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#f0a830"/><stop offset=".85" stop-color="#6b4a1a"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="49.5" fill="none" stroke="url(#g)" stroke-width=".5"/>
+      <circle cx="50" cy="100" r="20" fill="var(--bg)" stroke="#8a6326" stroke-width=".5"/>
+    </svg>
+    <div class="readout">
+      <div class="digits" aria-live="off">
+        <span class="seg big"><span class="ghost">888.</span><span class="val" id="spInt">!!0.</span></span>
+        <span class="seg small"><span class="ghost">8</span><span class="val" id="spDec">0</span></span>
+      </div>
+      <div class="unit u-speed">km/h</div>
+    </div>
+    <div class="sub"><b id="avg">0.0</b><span><span class="u-speed">km/h</span> avg</span></div>
+  </div>
+  <div class="bottom-pad"></div>
+
+  <div class="row">
+    <div class="stat"><b class="seg14"><span id="compass">--</span> <span id="arrow" style="display:inline-block;font-family:system-ui">↑</span></b><span>compass</span></div>
+    <div class="stat right"><b class="seg14" id="clock">--:--</b><span>clock</span></div>
+  </div>
+  <div class="row" style="justify-content:center;margin-top:20px">
+    <div class="stat center"><b><i id="acc" style="font-style:normal">--</i><small>m</small></b><span id="accLabel">accuracy</span></div>
+  </div>
+
+  <div class="controls">
+    <button class="icon" id="settingsBtn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+    <div class="pill">
+      <button id="lapBtn" hidden>LAP</button>
+      <button id="startBtn">START</button>
+    </div>
+    <button class="icon" id="lapsBtn" aria-label="Laps">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      <span class="badge" id="lapCount"></span>
+    </button>
+  </div>
+
+  <dialog id="settings">
+    <h2>Settings</h2>
+    <label>Units
+      <select id="unitSel"><option value="kmh">km/h · km</option><option value="mph">mph · mi</option></select>
+    </label>
+    <div class="actions"><button onclick="settings.close()">Done</button></div>
+  </dialog>
+
+  <dialog id="lapsDlg">
+    <h2>Laps</h2>
+    <ul id="lapList"></ul>
+    <div class="actions">
+      <button class="danger" id="resetBtn">Reset ride</button>
+      <button onclick="lapsDlg.close()">Close</button>
+    </div>
+  </dialog>
+
+<script>
+// ponytail: calibration knobs — tune on a real ride, phone GPS varies a lot
+const MAX_ACCURACY_M = 25;  // ignore fixes less accurate than this
+const MIN_SPEED_KMH = 2;    // below this = standing still (stops GPS jitter adding distance)
+
+const UNITS = {
+  kmh: { speed: 'km/h', perKmh: 1,        long: 'km', perM: 1 / 1000,    short: 'm',  perShort: 1 },
+  mph: { speed: 'mph',  perKmh: 0.621371, long: 'mi', perM: 1 / 1609.344, short: 'ft', perShort: 3.28084 },
+};
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+const $ = id => document.getElementById(id);
+let running = false, watchId = null, last = null, wakeLock = null;
+let elapsedMs = 0, startedAt = 0, distM = 0, maxKmh = 0;
+let laps = [], lapStart = { ms: 0, distM: 0 };
+let unit = 'kmh';
+try { unit = localStorage.getItem('unit') === 'mph' ? 'mph' : 'kmh'; } catch {}
+
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000, r = Math.PI / 180;
+  const a = Math.sin((lat2 - lat1) * r / 2) ** 2 +
+            Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin((lon2 - lon1) * r / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+console.assert(Math.abs(haversine(0, 0, 0, 1) - 111195) < 1, 'haversine broken');
+
+const U = () => UNITS[unit];
+const elapsed = () => elapsedMs + (running ? Date.now() - startedAt : 0);
+const kmh = (m, ms) => ms > 0 ? m / ms * 3600 : 0;
+const spd = v => (v * U().perKmh).toFixed(1);
+const fmtTime = ms => {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+};
+// Short distances in m/ft, switch to km/mi past 1 long unit
+const fmtDist = m => {
+  const long = m * U().perM;
+  return long >= 1 ? [long.toFixed(2), U().long] : [Math.round(m * U().perShort), U().short];
+};
+
+function showSpeed(v) {
+  // DSEG: "!" is a blank the width of a digit, "." is zero-width — so the ghost "888." lines up
+  const [i, d] = (v * U().perKmh).toFixed(1).split('.');
+  $('spInt').textContent = i.slice(-3).padStart(3, '!') + '.';
+  $('spDec').textContent = d;
+}
+
+function onFix(p) {
+  const { latitude: lat, longitude: lon, accuracy, speed, heading } = p.coords;
+  $('acc').textContent = Math.round(accuracy);
+  $('accLabel').style.color = accuracy > MAX_ACCURACY_M ? 'var(--btn)' : '';
+  if (accuracy > MAX_ACCURACY_M) return;
+
+  const fix = { lat, lon, t: p.timestamp };
+  if (!last) { last = fix; return; }
+
+  const d = haversine(last.lat, last.lon, lat, lon);
+  // Prefer the chip's Doppler speed; fall back to distance/time if the browser doesn't give one
+  const v = speed != null ? speed * 3.6 : kmh(d, fix.t - last.t);
+  if (v < MIN_SPEED_KMH) { showSpeed(0); return; } // keep `last`, so slow creep still counts once moving
+
+  if (heading != null && !isNaN(heading)) {
+    $('compass').textContent = COMPASS[Math.round(heading / 45) % 8];
+    $('arrow').style.transform = `rotate(${heading}deg)`;
+  }
+  distM += d;
+  maxKmh = Math.max(maxKmh, v);
+  last = fix;
+  showSpeed(v);
+  render();
+}
+
+function onError(e) {
+  $('acc').textContent = '--';
+  $('accLabel').textContent = e.code === 1 ? 'location denied' : 'GPS error';
+  $('accLabel').style.color = 'var(--btn)';
+}
+
+function render() {
+  const ms = elapsed(), [dv, du] = fmtDist(distM);
+  $('time').textContent = fmtTime(ms);
+  $('dist').textContent = dv; $('distUnit').textContent = du;
+  $('avg').textContent = spd(kmh(distM, ms));
+  $('max').textContent = spd(maxKmh);
+}
+
+function renderLaps() {
+  $('lapCount').textContent = laps.length || '';
+  $('lapList').innerHTML = laps.map(l => {
+    const [dv, du] = fmtDist(l.lapM);
+    return `<li><span>#${l.n}</span><span>${fmtTime(l.lapMs)}</span><span>${dv} ${du}</span><span>${spd(kmh(l.lapM, l.lapMs))} ${U().speed}</span></li>`;
+  }).join('');
+}
+
+function applyUnits() {
+  document.querySelectorAll('.u-speed').forEach(e => e.textContent = U().speed);
+  $('unitSel').value = unit;
+  showSpeed(0); render(); renderLaps();
+}
+
+async function keepAwake() {
+  try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
+}
+
+function start() {
+  if (!navigator.geolocation) return onError({ code: 0 });
+  running = true; startedAt = Date.now(); last = null;
+  $('accLabel').textContent = 'accuracy';
+  watchId = navigator.geolocation.watchPosition(onFix, onError, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
+  keepAwake();
+  $('startBtn').textContent = 'PAUSE'; $('lapBtn').hidden = false;
+}
+
+function pause() {
+  elapsedMs = elapsed(); running = false;
+  navigator.geolocation.clearWatch(watchId);
+  wakeLock?.release(); wakeLock = null;
+  showSpeed(0);
+  $('startBtn').textContent = 'RESUME'; $('lapBtn').hidden = true;
+  render();
+}
+
+function lap() {
+  const ms = elapsed();
+  laps.unshift({ n: laps.length + 1, lapMs: ms - lapStart.ms, lapM: distM - lapStart.distM });
+  lapStart = { ms, distM };
+  renderLaps();
+  navigator.vibrate?.(60);
+}
+
+function reset() {
+  if (running) pause();
+  elapsedMs = 0; distM = 0; maxKmh = 0; laps = []; lapStart = { ms: 0, distM: 0 }; last = null;
+  $('startBtn').textContent = 'START';
+  render(); renderLaps();
+}
+
+$('startBtn').onclick = () => running ? pause() : start();
+$('lapBtn').onclick = lap;
+$('resetBtn').onclick = () => confirm('Reset ride?') && (reset(), lapsDlg.close());
+$('settingsBtn').onclick = () => settings.showModal();
+$('lapsBtn').onclick = () => lapsDlg.showModal();
+$('unitSel').onchange = e => { unit = e.target.value; try { localStorage.setItem('unit', unit); } catch {} applyUnits(); };
+
+const tickClock = () => $('clock').textContent =
+  new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }).replace(' ', '');
+setInterval(() => { tickClock(); if (running) render(); }, 1000);
+tickClock(); applyUnits();
+// Wake lock is dropped when the tab is hidden; take it back on return
+document.addEventListener('visibilitychange', () => running && document.visibilityState === 'visible' && keepAwake());
+</script>
+</body>
+</html>
