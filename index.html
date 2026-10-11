@@ -15,8 +15,13 @@
   @font-face { font-family:Seg7;  src:url(https://cdn.jsdelivr.net/npm/dseg@0.46.0/fonts/DSEG7-Classic/DSEG7Classic-Bold.woff2) format('woff2'); font-display:swap; }
   :root {
     --bg:#1b1c1e; --surface:#26272a; --line:#2f3134; --fg:#f2f2f0; --dim:#8b8d91; --ghost:#2b2c2f;
-    --amber:#f5a524; --coral:#f2605a;
+    --amber:#f5a524; --coral:#f2605a; --tick:#4a4c50; --tick-major:#9a9ca0; --fill-a:#c7781a; --fill-b:#ffc04d;
     --g:min(86vw, 380px, 46dvh);   /* gauge size */
+  }
+  /* Daylight: max contrast for direct sun — pure white/black, darker accents so they read on white */
+  :root[data-theme="day"] {
+    --bg:#fff; --surface:#ebebeb; --line:#d0d0d0; --fg:#000; --dim:#454545; --ghost:#ededed;
+    --amber:#b85f00; --coral:#d2302a; --tick:#9a9a9a; --tick-major:#000; --fill-a:#b85f00; --fill-b:#f09a00;
   }
   * { box-sizing:border-box; }
   html, body { margin:0; background:var(--bg); color:var(--fg); }
@@ -46,8 +51,8 @@
   .gauge svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; }
   .track { stroke:var(--surface); }
   #fill { stroke:url(#amberGrad); transition:stroke-dashoffset .5s ease-out; }
-  .tick { stroke:#4a4c50; stroke-width:1; }
-  .tick.major { stroke:#9a9ca0; stroke-width:1.6; }
+  .tick { stroke:var(--tick); stroke-width:1; }
+  .tick.major { stroke:var(--tick-major); stroke-width:1.6; }
   .ticklabel { fill:var(--dim); font:600 8px Barlow, sans-serif; text-anchor:middle; dominant-baseline:central; }
   #maxMark { fill:var(--coral); transition:transform .5s ease-out; transform-origin:100px 100px; }
   .readout { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; padding-top:4%; }
@@ -56,7 +61,7 @@
   .seg .ghost { position:absolute; inset:0; color:var(--ghost); }
   .seg .val { position:relative; }
   .big { font-size:calc(var(--g) * .2); }
-  .small { font-size:calc(var(--g) * .09); }
+  .small { font-size:calc(var(--g) * .09); margin-left:calc(var(--g) * .035); } /* DSEG's "." is zero-width and spills right */
   .unitlabel { color:var(--dim); font-weight:600; font-size:17px; margin-top:10px; }
   .elapsed { position:absolute; left:0; right:0; bottom:2%; text-align:center; }
   .elapsed b { display:block; font-size:calc(var(--g) * .075); }
@@ -121,7 +126,7 @@
     <svg viewBox="0 0 200 200" aria-hidden="true">
       <defs>
         <linearGradient id="amberGrad" x1="0" y1="1" x2="1" y2="0">
-          <stop offset="0" stop-color="#c7781a"/><stop offset="1" stop-color="#ffc04d"/>
+          <stop offset="0" style="stop-color:var(--fill-a)"/><stop offset="1" style="stop-color:var(--fill-b)"/>
         </linearGradient>
       </defs>
       <!-- 270° arc, open at the bottom: from 135° clockwise to 45° -->
@@ -167,6 +172,9 @@
     <label>Units
       <select id="unitSel"><option value="kmh">Kilometres</option><option value="mph">Miles</option></select>
     </label>
+    <label style="margin-top:14px">Display
+      <select id="themeSel"><option value="auto">Auto</option><option value="night">Dark</option><option value="day">Daylight</option></select>
+    </label>
     <div class="actions"><button onclick="settings.close()" autofocus>Done</button></div>
   </dialog>
 
@@ -196,8 +204,9 @@ const $ = id => document.getElementById(id);
 let recording = false, last = null, wakeLock = null, smooth = 0;
 let elapsedMs = 0, startedAt = 0, distM = 0, maxKmh = 0;
 let laps = [], lapStart = { ms: 0, distM: 0 };
-let unit = 'kmh';
+let unit = 'kmh', theme = 'auto';
 try { unit = localStorage.getItem('unit') === 'mph' ? 'mph' : 'kmh'; } catch {}
+try { theme = localStorage.getItem('theme') || 'auto'; } catch {}
 
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371000, r = Math.PI / 180;
@@ -308,6 +317,15 @@ function applyUnits() {
   drawTicks(); showSpeed(smooth >= MIN_SPEED_KMH ? smooth : 0); render(); renderLaps();
 }
 
+const lightOS = matchMedia('(prefers-color-scheme: light)');
+function applyTheme() {
+  const t = theme === 'auto' ? (lightOS.matches ? 'day' : 'night') : theme;
+  document.documentElement.dataset.theme = t;
+  document.querySelector('meta[name=theme-color]').content = t === 'day' ? '#ffffff' : '#1b1c1e';
+  $('themeSel').value = theme;
+}
+lightOS.addEventListener('change', applyTheme);
+
 async function keepAwake() {
   try { wakeLock = await navigator.wakeLock?.request('screen'); } catch {}
 }
@@ -351,7 +369,8 @@ $('unitSel').onchange = e => { unit = e.target.value; try { localStorage.setItem
 
 const tickClock = () => $('clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 setInterval(() => { tickClock(); if (recording) render(); }, 1000);
-tickClock(); applyUnits();
+$('themeSel').onchange = e => { theme = e.target.value; try { localStorage.setItem('theme', theme); } catch {} applyTheme(); };
+tickClock(); applyTheme(); applyUnits();
 
 // GPS runs while the app is open so the signal can settle before you press Start
 if (navigator.geolocation) navigator.geolocation.watchPosition(onFix, onError, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
