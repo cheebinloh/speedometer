@@ -103,7 +103,11 @@
   td { padding:10px 0; border-top:1px solid var(--line); }
   th:not(:first-child), td:not(:first-child) { text-align:right; }
   tr.best td { color:var(--amber); }
-  .lapwrap { max-height:52dvh; overflow:auto; }
+  dialog .primary { background:var(--coral); color:#fff; }
+  dialog h2.section { margin-top:28px; padding-top:20px; border-top:1px solid var(--line); }
+  td small { display:block; color:var(--dim); font-size:14px; }
+  dialog .del { background:none; color:var(--dim); padding:10px 4px 10px 16px; font-size:24px; line-height:1; }
+  #totals { margin-bottom:12px; }
   .empty { color:var(--dim); margin:4px 0 0; }
 
   @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
@@ -161,7 +165,7 @@
       <button id="lapBtn" hidden>Lap</button>
       <button id="startBtn">Start</button>
     </div>
-    <button class="icon" id="lapsBtn" aria-label="Laps">
+    <button class="icon" id="lapsBtn" aria-label="Laps and ride history">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
       <span class="badge" id="lapCount"></span>
     </button>
@@ -179,12 +183,16 @@
   </dialog>
 
   <dialog id="lapsDlg">
-    <h2>Laps</h2>
-    <div class="lapwrap" id="lapWrap"></div>
-    <div class="actions">
-      <button class="danger" id="resetBtn">Reset ride</button>
-      <button onclick="lapsDlg.close()" autofocus>Close</button>
+    <h2>This ride</h2>
+    <div id="lapWrap"></div>
+    <div class="actions" id="rideActions">
+      <button class="danger" id="resetBtn">Discard</button>
+      <button class="primary" id="finishBtn">Finish and save</button>
     </div>
+    <h2 class="section">History</h2>
+    <p class="empty" id="totals"></p>
+    <div id="historyWrap"></div>
+    <div class="actions"><button onclick="lapsDlg.close()" autofocus>Close</button></div>
   </dialog>
 
 <script>
@@ -203,7 +211,13 @@ const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 const $ = id => document.getElementById(id);
 let recording = false, last = null, wakeLock = null, smooth = 0;
 let elapsedMs = 0, startedAt = 0, distM = 0, maxKmh = 0;
-let laps = [], lapStart = { ms: 0, distM: 0 };
+let laps = [], lapStart = { ms: 0, distM: 0 }, rideStart = 0;
+// Ride data lives in this browser only. Home-screen apps keep it; a plain browser tab may lose it after weeks unused.
+const store = {
+  get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let rides = store.get('rides', []);
 let unit = 'kmh', theme = 'auto';
 try { unit = localStorage.getItem('unit') === 'mph' ? 'mph' : 'kmh'; } catch {}
 try { theme = localStorage.getItem('theme') || 'auto'; } catch {}
@@ -301,6 +315,8 @@ function render() {
 function renderLaps() {
   $('lapCount').textContent = laps.length || '';
   $('lapLabel').textContent = `Lap ${laps.length + 1}`;
+  $('rideActions').hidden = elapsed() === 0;
+  if (elapsed() === 0) { $('lapWrap').innerHTML = '<p class="empty">No ride in progress. Press Start to begin one.</p>'; return; }
   if (!laps.length) { $('lapWrap').innerHTML = '<p class="empty">Tap Lap while riding to split your ride into laps.</p>'; return; }
   const best = Math.max(...laps.map(l => kmh(l.lapM, l.lapMs)));
   $('lapWrap').innerHTML = `<table><tr><th>Lap</th><th>Time</th><th>${U().long}</th><th>${U().speed}</th></tr>` +
@@ -310,11 +326,38 @@ function renderLaps() {
     }).join('') + '</table>';
 }
 
+function renderHistory() {
+  if (!rides.length) {
+    $('totals').textContent = 'Finished rides are saved here.';
+    $('historyWrap').innerHTML = '';
+    return;
+  }
+  const totalM = rides.reduce((a, r) => a + r.distM, 0);
+  $('totals').textContent = `${rides.length} ride${rides.length > 1 ? 's' : ''}, ${dst(totalM)} ${U().long} total`;
+  $('historyWrap').innerHTML = `<table><tr><th>Date</th><th>Time</th><th>${U().long}</th><th>Avg</th><th></th></tr>` +
+    rides.map((r, i) => {
+      const d = new Date(r.start);
+      return `<tr><td>${d.toLocaleDateString([], { day: 'numeric', month: 'short' })}<small>${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small></td>` +
+        `<td>${fmtTime(r.ms)}</td><td>${dst(r.distM)}</td><td>${spd(kmh(r.distM, r.ms))}<small>max ${spd(r.maxKmh)}</small></td>` +
+        `<td><button class="del" data-i="${i}" aria-label="Delete ride">×</button></td></tr>`;
+    }).join('') + '</table>';
+}
+
+// Saves the ride in progress so a closed tab or dead battery doesn't lose it
+const saveCurrent = () => store.set('current', elapsed() > 0 ? { elapsedMs: elapsed(), distM, maxKmh, laps, lapStart, rideStart } : null);
+
+function syncButtons() {
+  const started = elapsed() > 0;
+  $('startBtn').textContent = recording ? 'Pause' : started ? 'Resume' : 'Start';
+  $('startBtn').classList.toggle('paused', !recording && started);
+  $('lapBtn').hidden = !recording;
+}
+
 function applyUnits() {
   document.querySelectorAll('.u-speed').forEach(e => e.textContent = U().speed);
   $('distUnit').textContent = U().long;
   $('unitSel').value = unit;
-  drawTicks(); showSpeed(smooth >= MIN_SPEED_KMH ? smooth : 0); render(); renderLaps();
+  drawTicks(); showSpeed(smooth >= MIN_SPEED_KMH ? smooth : 0); render(); renderLaps(); renderHistory();
 }
 
 const lightOS = matchMedia('(prefers-color-scheme: light)');
@@ -331,46 +374,58 @@ async function keepAwake() {
 }
 
 function start() {
+  if (!elapsedMs) rideStart = Date.now();
   recording = true; startedAt = Date.now(); last = null;
-  keepAwake();
-  $('startBtn').textContent = 'Pause'; $('startBtn').classList.remove('paused');
-  $('lapBtn').hidden = false;
+  keepAwake(); syncButtons(); renderLaps();
 }
 
 function pause() {
   elapsedMs = elapsed(); recording = false;
   wakeLock?.release(); wakeLock = null;
-  $('startBtn').textContent = 'Resume'; $('startBtn').classList.add('paused');
-  $('lapBtn').hidden = true;
-  render();
+  syncButtons(); render(); saveCurrent();
 }
 
 function lap() {
   const ms = elapsed();
   laps.unshift({ n: laps.length + 1, lapMs: ms - lapStart.ms, lapM: distM - lapStart.distM });
   lapStart = { ms, distM };
-  renderLaps(); render();
+  renderLaps(); render(); saveCurrent();
   navigator.vibrate?.(60);
 }
 
 function reset() {
   if (recording) pause();
-  elapsedMs = 0; distM = 0; maxKmh = 0; laps = []; lapStart = { ms: 0, distM: 0 };
-  $('startBtn').textContent = 'Start'; $('startBtn').classList.remove('paused');
-  render(); renderLaps();
+  elapsedMs = 0; distM = 0; maxKmh = 0; laps = []; lapStart = { ms: 0, distM: 0 }; rideStart = 0;
+  syncButtons(); render(); renderLaps(); saveCurrent();
+}
+
+function finish() {
+  if (recording) pause();
+  rides.unshift({ start: rideStart, ms: elapsedMs, distM, maxKmh, laps });
+  store.set('rides', rides);
+  reset(); renderHistory();
 }
 
 $('startBtn').onclick = () => recording ? pause() : start();
 $('lapBtn').onclick = lap;
-$('resetBtn').onclick = () => confirm('Reset this ride? Time, distance and laps will be cleared.') && (reset(), lapsDlg.close());
+$('resetBtn').onclick = () => confirm('Discard this ride? It will not be saved to history.') && reset();
+$('finishBtn').onclick = finish;
+$('historyWrap').onclick = e => {
+  const i = e.target.dataset?.i;
+  if (i == null || !confirm('Delete this ride from history?')) return;
+  rides.splice(+i, 1); store.set('rides', rides); renderHistory();
+};
 $('settingsBtn').onclick = () => settings.showModal();
 $('lapsBtn').onclick = () => lapsDlg.showModal();
 $('unitSel').onchange = e => { unit = e.target.value; try { localStorage.setItem('unit', unit); } catch {} applyUnits(); };
 
 const tickClock = () => $('clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-setInterval(() => { tickClock(); if (recording) render(); }, 1000);
+setInterval(() => { tickClock(); if (recording) { render(); saveCurrent(); } }, 1000);
 $('themeSel').onchange = e => { theme = e.target.value; try { localStorage.setItem('theme', theme); } catch {} applyTheme(); };
-tickClock(); applyTheme(); applyUnits();
+// Bring back a ride that was interrupted (tab closed, phone died) — paused, so time doesn't jump
+const interrupted = store.get('current', null);
+if (interrupted) ({ elapsedMs, distM, maxKmh, laps, lapStart, rideStart } = interrupted);
+tickClock(); applyTheme(); applyUnits(); syncButtons();
 
 // GPS runs while the app is open so the signal can settle before you press Start
 if (navigator.geolocation) navigator.geolocation.watchPosition(onFix, onError, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
